@@ -2,17 +2,26 @@ from pyquery import PyQuery as pq
 from lxml import etree
 import urllib
 from urllib import request
+import re
 
-from PyPDF2 import PdfFileWriter #  PdfFileReader ?
+from PyPDF2 import PdfFileWriter, PdfFileReader
+
+from classes import PDFPageAggregatorLineBinding
+from pdfminer.pdfparser import PDFParser
+from pdfminer.pdfdocument import PDFDocument
+from pdfminer.pdfpage import PDFPage
+from pdfminer.pdfinterp import PDFResourceManager, PDFPageInterpreter
+from pdfminer.layout import LAParams
 
 
-# Cast to StringIO object- adjustment for versioning of Python
+# Cast to StringIO object- adjustment for Python3
 try:
     from StringIO import StringIO
 except ImportError:
     from io import StringIO
     from io import BytesIO
 
+#extract url's
 def process_url(url, page_no):
 
     end_reading = 1
@@ -40,6 +49,33 @@ def process_url(url, page_no):
 
         end_reading = 0
         return [], end_reading # crawl is over
+
+def scrape_gazette_names(url_sub):
+    page_no = 0
+    to_end = 1
+    gazette_names = []
+    try:
+        while (to_end):
+
+            page_no += 1
+            url= url_sub + '?p=' + str(page_no)
+
+            #url='http://www.gpwonline.co.za/Gazettes/Pages/Published-Tender-Bulletin.aspx?p=' \
+            #+ str(page_no)
+
+            names_extracted, to_end = process_url(url, page_no)
+
+            if to_end: # finish the parsing
+
+                gazette_names.append(names_extracted)
+
+            else:
+                pass
+
+    except urllib.request.HTTPError as e: # bad url-> 404
+            print('HTTP ERROR %s: no webpage' % e.code)
+            pass # no more webpages - assumes that no pages are broken in the middle
+    return gazette_names
 
 def extract_gazette_info(dev_info):
 
@@ -72,112 +108,79 @@ def extract_gazette_info(dev_info):
 
     return class_info
 
-def save_to_dict(notice_info, notice_subject, pages_to_extract, classification_data, num_pages, url):
-        """
-        same as save_to_json, but stopped at the dict form
-        """
-        #from collections import defaultdict
-        classification = dict() # dict to store data and dump into json
 
-        # this one will be a list of extra info
-        classification['other_attributes'] = []
 
-        classification['issue'] = dict()#Issue() # instance of Issue
-        # publication = '', issn = 0, num_pages = 0, volume=0, notice_title='')
+def get_info_outline(fp):
+    parser = PDFParser(fp)
+    doc = PDFDocument(parser)
 
-        classification['document'] = dict() #Document() # instance of Document- mainly to gather
-           # pages where notices are published and their types
+    if not doc.is_extractable:
+        raise PDFTextExtractionNotAllowed
 
-        classification['url'] = url
+    rsrcmgr = PDFResourceManager()
+    laparams = LAParams()
+    device = PDFPageAggregatorLineBinding(rsrcmgr, laparams=laparams) # adds information from pages
+              # =  cumulates text per pages read
+    interpreter = PDFPageInterpreter(rsrcmgr, device)
 
-        for x in set(classification_data):
-            if ('vol' in x):
-                uid_vol = x.split('.')[1].strip()
+    dev_info = [] # first 2 pages
+    info = [] # issue info
+    skip = 0 # to skip pages with extra complex background
+    pages_skipped = []
 
-                classification['issue']['edition_id'] = uid_vol
-
-            # sometimes there are 2 numer references
-            if ('no' in x):
-                x = re.search(r'[A-Za-z]{2}[.][ ]\d{1,}', info[1], re.IGNORECASE).string.split(' ')
-
-                uid_no = x[1]
-                classification['other_attributes'].append(uid_no)
-
-            if ('gazette' in x):
-                classification['issue']['publication'] = x
-                uid_type = x
-
-            if ('province' in x):
-                classification['other_attributes'].append(x)
-
-            if ('extraordinary' in x):
-                classification['issue']['title'] = 'extraordinary'
-
-            if ('issn' in x):
-                # save just the number
-                classification['issue']['identifier'] = x.split('issn ')[1].strip()
-
-            #date
+    for i, page in enumerate(PDFPage.create_pages(doc)):
             try:
-
-                date_re = re.search(r'\d{1,}[ ][A-Za-z]{3,}[ ]\d{4}', x, re.IGNORECASE).string.lstrip().split(' ')
-                classification['date_published'] = [date_re[1],date_re[2]]
-                classification['other_attributes'].append(date_re[0] + ' / ' + date_re[1] + ' / ' + date_re[2])
-
+                page.resources['ColorSpace']
+                skip = 1
             except:
+                #print('no CS field')
+                skip = 0
+                pages_skipped.append(i)
                 pass
 
-        # add info from the outline (keywords are important)
-        # shoulf be parsed: save keywords?
-        classification['summary'] = notice_info
+            if not skip:
+                interpreter.process_page(page)
+                device.get_result()
 
-        # page_range, string /^[0-9]*(-[0-9]*)?$/
-        # The pages the document within the issue where to look for info
+                if i ==0 or i == 1:  # device cumulates output, so this is p1 and p2 (0+1)
+                        # the reason for 'or' is that the 2nd page might be contaminated
+                        # in which case onky the front is used
+                        # receive the LTPage object for this page
+                        dev_info = device.rows
 
-        classification['document']['page_range'] =  pages_to_extract
-        classification['subjects'] = notice_subject # entities
-        classification['about'] = [] # parsed info
+                if device.outline: # stop scan after seeing the outline
 
-        classification['issue']['page_range'] = num_pages
+                        break
 
-        # timestamp of accessing the doc
-        classification['other_attributes'].append(time.asctime( time.localtime(time.time()) ))
 
-        #classification['source_url'] =
-
-        uid = uid_no + '_' + uid_vol
-        # modify id's if necessary
-        classification['uid'] = uid # must be unique
-        classification['identifier'] = uid  # + uid_type ? can be more descriptive possibly
-
-        # see comment above this function
-        return classification
+    info = extract_gazette_info(dev_info)
+    return info, device, pages_skipped
 
 
 # split pdf
 def split_pdf(input_pdf, list_pages, end_page = None):
 
-    res = []
-    if not end_page:
-        end_page = inputpdf.numPages
+        res = []
+        if not end_page:
+            end_page = inputpdf.numPages
 
-    for i in range(len(list_pages)):
+        for i in range(len(list_pages)):
 
-        output_i = PdfFileWriter()
+            output_i = PdfFileWriter()
 
-        if i == len(list_pages)-1:
-            end = end_page -1
-        else:
-            end = list_pages[i+1] -1
+            if i == len(list_pages)-1:
+                end = end_page -1
+            else:
+                end = list_pages[i+1] -1
 
-        for j in range(list_pages[i], end):
-            output_i.addPage(inputpdf.getPage(j))
-        #with open("document-page%i.pdf" % i, "wb") as outputStream:
-         #   output_i.write(outputStream)
+            for j in range(list_pages[i], end):
+                output_i.addPage(inputpdf.getPage(j))
+            #with open("document-page%i.pdf" % i, "wb") as outputStream:
+             #   output_i.write(outputStream)
 
-        sio = BytesIO()
-        output_i.write(sio)
+            sio = BytesIO()
+            output_i.write(sio)
 
-        res.append(sio)
+            res.append(sio)
 
-    return res
+        return res

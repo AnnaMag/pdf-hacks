@@ -2,6 +2,8 @@ from pdfminer.pdfinterp import PDFResourceManager, PDFPageInterpreter
 from pdfminer.converter import PDFPageAggregator
 from pdfminer.layout import LTPage, LTChar, LTAnno, LAParams, LTTextBox, LTTextLine
 
+from language import detect_language
+
 #override the receive_layout method called for each page during the rendering process
 class PDFPageAggregatorLineBinding(PDFPageAggregator):
     def __init__(self, rsrcmgr, pageno=1, laparams=None):
@@ -14,16 +16,13 @@ class PDFPageAggregatorLineBinding(PDFPageAggregator):
 
     def receive_layout(self, ltpage):
         # this is text hacking for training purpose-> to be replaced by parsing outline
-        # using bboxes and page numbers
+        # into dict (or else) using bboxes and page numbers
         #outline_text = [] # we will store content below contents, till end of the page
         #Hacky var
         #outline = 0
 
         def render(item, page_number):
 
-            # print(item, page_number, outline)
-
-            # start of proper fun
             if isinstance(item, LTPage) or isinstance(item, LTTextBox):
                 for child in item:
                     render(child, page_number)
@@ -35,7 +34,6 @@ class PDFPageAggregatorLineBinding(PDFPageAggregator):
                 child_str = ' '.join(child_str.split()).strip()
                 if child_str:
                     row = (page_number, item.bbox[0], item.bbox[1], item.bbox[2], item.bbox[3], child_str) # bbox == (x1, y1, x2, y2)
-                    #print("pes..", child_str)
                     #  HACK
                     #check if it is outline page
                     if ('contents' in child_str.lower()):
@@ -44,8 +42,6 @@ class PDFPageAggregatorLineBinding(PDFPageAggregator):
                         self.outline = 1
 
                     if self.outline:
-                        #print(self.outline)
-                        #print(child_str.lower())
 
                         if ('agricultur' in child_str.lower()) or ('health' in child_str.lower())\
                            or ('social' in child_str.lower()) or ('schedule' in child_str.lower())\
