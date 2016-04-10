@@ -3,7 +3,6 @@ from lxml import etree
 import urllib
 from urllib import request
 import re
-
 from PyPDF2 import PdfFileWriter, PdfFileReader
 
 from classes import PDFPageAggregatorLineBinding
@@ -98,11 +97,25 @@ def extract_gazette_info(dev_info):
         try:
             date_re = re.search(r'\d{1,}[ ][A-Za-z]{3,}[ ]\d{4}', entry, re.IGNORECASE).string#.split(' ')
             if date_re and ('gazette' in date_re):
+
                     date = date_re.split(',')
 
-                    class_info.append(date[0])
+                    class_info.append(date[0]) # add info about gazette
                     class_info.append(date[1])
 
+            if date_re:
+                    date_str = date_re.lstrip().split(',')
+                    if len(date_str) == 2: # name before the date
+                        date = date_str[1] # take the 2nd element
+
+                    else:
+                        date = date_str # date is all there is
+                    date_tok = date.lstrip().split(' ')
+                    if dict_months[date_tok[1]]: # month needs to be translated
+
+                        date_tok[1] = dict_months[date_tok[1]]
+                        class_info.append(date_tok[0] + ' ' + date_tok[1] + ' ' + date_tok[2])
+    
         except:
             pass
 
