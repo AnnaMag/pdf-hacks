@@ -3,7 +3,7 @@ from pdfminer.converter import PDFPageAggregator
 from pdfminer.layout import LTPage, LTChar, LTAnno, LAParams, LTTextBox, LTTextLine
 
 #override the receive_layout method called for each page during the rendering process
-class PDFPageDetailedAggregator(PDFPageAggregator):
+class PDFPageAggregatorLineBinding(PDFPageAggregator):
     def __init__(self, rsrcmgr, pageno=1, laparams=None):
         PDFPageAggregator.__init__(self, rsrcmgr, pageno=pageno, laparams=laparams)
         self.rows = []
